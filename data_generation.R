@@ -2,8 +2,7 @@ library(tidyverse)
 library(foreach)
 set.seed(11)
 
-source_location <- "I:/MSc/Aalen simulations/Aalen_et_al_time_dependent_mediators_in_survial_analysis/to_git/"
-setwd(source_location)
+setwd(...) #Set your location of all the files here
 
 
 # number of patients
