@@ -205,10 +205,193 @@ difference_effects_real <- rbind(
 
 
 
+
+################################################################################
+# Non-parametric bootstrap
+
+N <- 500 #number of bootstrap samples
+timebyy <- 0.5
+
+# Let's make this faster
+cl <- makeCluster(8)
+registerDoParallel(cl)
+
+tic()
+BS_samples <- foreach(iter=1:N,
+                      .combine="rbind",
+                      .packages=c("dplyr", "reshape2", "dtplyr", "foreach", "stringr")) %dopar% {
+                        
+                        
+                        mydata <- mydata.reg[sample(nrow(mydata.reg),replace=T),] %>% 
+                          mutate(patient = 1:nrow(mydata.reg))
+                        
+                        # Fitting the model for the mediator
+                        M_fits <- mydata %>% 
+                          pool_mediator_data(timeby=timebyy) %>% 
+                          pooled_logreg() %>% 
+                          pool_event_data(data=mydata,
+                                          timeby=timebyy)
+                        
+                        
+                        # Fitting the model for the survival outcome
+                        additive_fits <- my.additive.new(regformula = "~ A + M_rs + Z",
+                                                         event="E",
+                                                         startt="int_begin",
+                                                         stopt="int_end",
+                                                         dataset=M_fits$pooled_event_data)
+                        additive_fits$coeff[,"M_rs"] <- ifelse(is.na(additive_fits$coeff[,"M_rs"]),
+                                                               0,
+                                                               additive_fits$coeff[,"M_rs"]) #turn to 0 where indir effect is undefined
+                        
+                        
+                        # Manipulate the results a bit and get them ready for estimating the survival functions
+                        data_long <- M_fits$pooled_event_data
+                        logreg_fits <- M_fits$logreg_coefs
+                        obstimes.imput <- sort(unique(data_long$int_end[data_long$E==1] )) #get event times
+                        
+                        additive_coefs <- data.frame(time = obstimes.imput,
+                                                     mu_s = additive_fits$coeff[,"(Intercept)"],
+                                                     alpha_s = additive_fits$coeff[,"A"],
+                                                     beta_s = additive_fits$coeff[,"M_rs"],
+                                                     rho_s = additive_fits$coeff[,"Z"]) %>% 
+                          mutate(cum_mu_s = cumsum(mu_s),
+                                 cum_alpha_s = cumsum(alpha_s),
+                                 cum_beta_s = cumsum(beta_s),
+                                 cum_rho_s = cumsum(rho_s))
+                        
+                        
+                        # Estimate the surv fn
+                        res_a1_astar1 <- surv_fn(aastar=1,
+                                                 aa=1,
+                                                 ZZ=67,
+                                                 logreg_fits = logreg_fits,
+                                                 additive_coefs = additive_coefs,
+                                                 data_long = data_long)
+                        
+                        res_a1_astar0 <- surv_fn(aastar=0,
+                                                 aa=1,
+                                                 ZZ=67,
+                                                 logreg_fits = logreg_fits,
+                                                 additive_coefs = additive_coefs,
+                                                 data_long = data_long)
+                        
+                        res_a0_astar0 <- surv_fn(aastar=0,
+                                                 aa=0,
+                                                 ZZ=67,
+                                                 logreg_fits = logreg_fits,
+                                                 additive_coefs = additive_coefs,
+                                                 data_long = data_long)
+                        
+                        
+                        # Return results
+                        data.frame(
+                          time = res_a1_astar1$time,
+                          
+                          dir_rel = res_a1_astar0$surv_prob / res_a0_astar0$surv_prob,
+                          indir_rel = res_a1_astar1$surv_prob / res_a1_astar0$surv_prob,
+                          total_rel = res_a1_astar1$surv_prob / res_a0_astar0$surv_prob,
+                          
+                          dir_diff = res_a1_astar0$surv_prob - res_a0_astar0$surv_prob,
+                          indir_diff = res_a1_astar1$surv_prob - res_a1_astar0$surv_prob,
+                          total_diff = res_a1_astar1$surv_prob - res_a0_astar0$surv_prob
+                        )
+                      }
+
+
+toc()
+stopCluster(cl)
+
+
+BS_quantiles <- BS_samples %>% 
+  group_by(time) %>% 
+  summarise(
+    dir_rel_lower = quantile(dir_rel, 0.025),
+    dir_rel_upper = quantile(dir_rel, 0.975),
+    
+    indir_rel_lower = quantile(indir_rel, 0.025),
+    indir_rel_upper = quantile(indir_rel, 0.975),
+    
+    total_rel_lower = quantile(total_rel, 0.025),
+    total_rel_upper = quantile(total_rel, 0.975),
+    
+    dir_diff_lower = quantile(dir_diff, 0.025),
+    dir_diff_upper = quantile(dir_diff, 0.975),
+    
+    indir_diff_lower = quantile(indir_diff, 0.025),
+    indir_diff_upper = quantile(indir_diff, 0.975),
+    
+    total_diff_lower = quantile(total_diff, 0.025),
+    total_diff_upper = quantile(total_diff, 0.975)
+  ) %>% 
+  ungroup()
+
+
+BS_quantiles_forggplot <-rbind(
+  data.frame(
+    time = BS_quantiles$time,
+    lower = BS_quantiles$dir_rel_lower,
+    upper = BS_quantiles$dir_rel_upper,
+    type = "Direct effect",
+    scale = "rel"
+  ),
+  
+  data.frame(
+    time = BS_quantiles$time,
+    lower = BS_quantiles$indir_rel_lower,
+    upper = BS_quantiles$indir_rel_upper,
+    type = "Indirect effect",
+    scale = "rel"
+  ),
+  
+  data.frame(
+    time = BS_quantiles$time,
+    lower = BS_quantiles$total_rel_lower,
+    upper = BS_quantiles$total_rel_upper,
+    type = "Total effect",
+    scale = "rel"
+  ),
+  
+  data.frame(
+    time = BS_quantiles$time,
+    lower = BS_quantiles$dir_diff_lower,
+    upper = BS_quantiles$dir_diff_upper,
+    type = "Direct effect",
+    scale = "diff"
+  ),
+  
+  data.frame(
+    time = BS_quantiles$time,
+    lower = BS_quantiles$indir_diff_lower,
+    upper = BS_quantiles$indir_diff_upper,
+    type = "Indirect effect",
+    scale = "diff"
+  ),
+  
+  data.frame(
+    time = BS_quantiles$time,
+    lower = BS_quantiles$total_diff_lower,
+    upper = BS_quantiles$total_diff_upper,
+    type = "Total effect",
+    scale = "diff"
+  )
+) %>% 
+  mutate(eff=1)
+
+
+
+
+
+
+
+
+
+##################################################################################
 # Plotting the results
 relative_effects %>% 
   ggplot(aes(time, eff)) +
   geom_step(size=0.5)+
+  geom_ribbon(data=BS_quantiles_forggplot %>% filter(scale=="rel"),
+              aes(ymin=lower, ymax=upper), alpha=0.3)+
   geom_line(data=relative_effects_real, aes(time, eff), color=colorval)+
   facet_grid( ~ type)+
   theme_bw()+
@@ -222,12 +405,15 @@ difference_effects %>%
   ggplot(aes(time, eff)) +
   geom_step(size=0.5)+
   geom_line(data=difference_effects_real, aes(time, eff), color=colorval)+
+  geom_ribbon(data=BS_quantiles_forggplot %>% filter(scale=="diff"),
+              aes(ymin=lower, ymax=upper), alpha=0.3)+
   facet_grid( ~ type)+
   theme_bw()+
   theme(strip.background = element_rect("white"),
         text = element_text(family = "serif", size=13))+
   ylab("Survival difference")+
   xlab("Years")
+
 
 
 
