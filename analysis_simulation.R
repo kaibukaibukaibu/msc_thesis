@@ -208,12 +208,14 @@ difference_effects_real <- rbind(
 
 ################################################################################
 # Non-parametric bootstrap
+# NB! This code is quite slow, so if one wishes to skip it and see the plots in the end without it,
+# one can follow the instructions in the plotting commands in the end of this file
 
 N <- 500 #number of bootstrap samples
 timebyy <- 0.5
 
 # Let's make this faster
-cl <- makeCluster(8)
+cl <- makeCluster(2)
 registerDoParallel(cl)
 
 tic()
@@ -390,7 +392,7 @@ BS_quantiles_forggplot <-rbind(
 relative_effects %>% 
   ggplot(aes(time, eff)) +
   geom_step(size=0.5)+
-  geom_ribbon(data=BS_quantiles_forggplot %>% filter(scale=="rel"),
+  geom_ribbon(data=BS_quantiles_forggplot %>% filter(scale=="rel"), #If one wishes to skip bootstrapping, one can comment this and the next row out
               aes(ymin=lower, ymax=upper), alpha=0.3)+
   geom_line(data=relative_effects_real, aes(time, eff), color=colorval)+
   facet_grid( ~ type)+
@@ -404,15 +406,16 @@ relative_effects %>%
 difference_effects %>% 
   ggplot(aes(time, eff)) +
   geom_step(size=0.5)+
-  geom_line(data=difference_effects_real, aes(time, eff), color=colorval)+
-  geom_ribbon(data=BS_quantiles_forggplot %>% filter(scale=="diff"),
+  geom_ribbon(data=BS_quantiles_forggplot %>% filter(scale=="diff"), #If one wishes to skip bootstrapping, one can comment this and the next row out
               aes(ymin=lower, ymax=upper), alpha=0.3)+
+  geom_line(data=difference_effects_real, aes(time, eff), color=colorval)+
   facet_grid( ~ type)+
   theme_bw()+
   theme(strip.background = element_rect("white"),
         text = element_text(family = "serif", size=13))+
   ylab("Survival difference")+
   xlab("Years")
+
 
 
 
