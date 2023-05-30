@@ -7,7 +7,7 @@ setwd(...) #Set your location of all the files here
 
 # number of patients
 n <- 20000
-delta <- 1/52 # 52 is the number of weeks in a year!
+delta <- 1/52
 endofstudy <- 13
 time<-seq(delta, endofstudy, by=delta) #define timepoints
 time_indexes <- 1:length(time)
@@ -15,12 +15,12 @@ pr <- function(lincomb) exp(lincomb) / (1+exp(lincomb))
 
 
 # Baseline covariate (age)
-Z <- rnorm(n=n, mean=67, sd=3)
+Z <- rnorm(n=n, mean=67, sd=7)
 hist(Z)
 
 # treatment A and M0
 A_0 <- rep(-66.5, times=n)
-A <- rbinom(prob=pr(A_0 + 1*Z + rnorm(n)), n=n, size=1) #trt depending on Z
+A <- rbinom(prob=pr(A_0 + 1*Z), n=n, size=1)
 table(A)
 M0 <- rep(0, n) #we assume that mediator had not happened at study start
 
@@ -31,7 +31,7 @@ plot(eta_1)
 
 
 # effect of treatment 1 on M (plus baseline)
-gamma <- rep(-1, times=length(time))
+gamma <- rep(-1.2, times=length(time))
 plot(gamma)
 
 
@@ -43,27 +43,20 @@ eta_i.mat <- matrix(rep(eta_i, times=n), byrow=T, nrow=n)
 
 
 # effect of baseline covariate Z on M
-teeta <- rep(0.003, times=length(time))
+teeta <- rep(0.01, times=length(time))
 plot(teeta)
 teeta.mat <- matrix(rep(teeta, times=n), byrow=T, nrow=n)
 Z.mat <- matrix(rep(Z, times=length(time)), byrow=F, nrow=n)
 
 
-
-# Generate M matrix and noise
-M_linkomb_nonoise <- eta_1 + eta_i.mat + A %*% t(gamma) + teeta.mat*Z.mat
+# Generate M matrix
+M_linkomb <- eta_1 + eta_i.mat + A %*% t(gamma) + teeta.mat*Z.mat
 # so for each timepoint i for each individual we have eta_1 + eta_i*I(i!=1) + gamma*A + teeta*Z here
-
-Sigma <- matrix(0, length(time), length(time)) #some noise
-diag(Sigma) <- 0.05
-mu <- rep(0, length(time))
-noise <- MASS::mvrnorm(n = n, mu = mu, Sigma = Sigma)
-
 
 
 # Probabilities of mediator happening for each time point (if it has not happened yet)
-M.mat_pr <- pr(M_linkomb_nonoise + noise)
-M.mat <- M_linkomb_nonoise
+M.mat_pr <- pr(M_linkomb)
+M.mat <- M_linkomb
 
 #first column, based only on M0
 pr_0to1 <- M.mat_pr[,1]
@@ -103,7 +96,7 @@ A.mat <- sim.dat$A %*% t(alpha_s)
 
 
 # Effect of M on hazard
-beta_s <- spline(c(0,2,10,13), c(0.08, 0.1, 0.15, 0.15)/40, xout=time)
+beta_s <- spline(c(0,2,10,13), c(0.08, 0.1, 0.15, 0.15)/5, xout=time)
 plot(beta_s) 
 beta_s <- beta_s$y
 beta_s.mat <- matrix(rep(beta_s, times=n), byrow=T, nrow=n)
@@ -114,7 +107,7 @@ Meff.mat <- M.mat * beta_s.mat
 
 
 # Effect of Z on hazard
-rho_s <- spline(c(0,9,11,13), c(0.2, 0.23, 0.22999, 0.23)/(50*67), xout=time)
+rho_s <- spline(c(0,9,11,13), c(0.2, 0.23, 0.22999, 0.23)/(3000), xout=time)
 plot(rho_s) 
 rho_s <- rho_s$y
 rho_s.mat <- matrix(rep(rho_s, times=n), byrow=T, nrow=n)
@@ -122,7 +115,7 @@ Zeff.mat <- rho_s.mat * Z.mat
 
 
 # Death probabilities for each tiny interval
-hmat <- A.mat + Meff.mat + Zeff.mat #combine dir and indir and baseline cov
+hmat <- A.mat + Meff.mat + Zeff.mat 
 beta0 <- abs(min(hmat)) #baseline, to make sure no probability is negative
 hmat <- hmat + beta0 
 pmat <- hmat*delta # an approximated probability of the probability of an event within an interval of size delta so we end up with event probabilities for small intervals
@@ -160,7 +153,7 @@ sim.dat$E <- 1*(sim.dat$Time<endofstudy) #set the event indicator to 1 if it hap
 
 
 # Censoring
-ff <- runif(n, 0, 28)
+ff <- runif(n, 0, 30)#40 earlier
 sim.dat$C.Time <- ff
 sim.dat$C <- 1*(sim.dat$C.Time < sim.dat$Time) #if censored before event time (or study end time), then set to 1
 sim.dat[sim.dat$C==1, "E"] <- 0 #set event indicator to 0 for those which got censored
@@ -193,10 +186,6 @@ hax <- function(df) { #for each patient:
 m.split.hax <- lapply(m.split, hax)
 mydata.hax <- do.call("rbind", m.split.hax)
 
-
-mydata.hax[mydata.hax$E==1, "stopt"] <- mydata.hax[mydata.hax$E==1, "stopt"] + 
-  runif(length(mydata.hax[mydata.hax$E==1, "stopt"]), 0, 0.0005) #add some noise for the interval stop times for those where the event happened
-
 sim.dat.long <- mydata.hax[, c("patient","A","M0", "M","C","E", "Z", "start","stopt")]
 mydata.fin <- sim.dat.long
 
@@ -227,36 +216,6 @@ mydata.reg <- merge(lastrow, M_status, by = "patient") %>%
          M_time = ifelse(study_exit <= M_time, study_exit, M_time))
 save(mydata.reg, file= "mydata.reg.rda")
 
-# check data quality by some frequency tables
-hist(mydata.reg$M_time)
-hist(mydata.reg$study_exit)
-prop.table(table(mydata.reg$M, mydata.reg$E),1)
-prop.table(table(mydata.reg$A, mydata.reg$M),1)
-prop.table(table(mydata.reg$A, mydata.reg$E),1)
-
-# censored people
-mydata.reg_cens <- mydata.reg %>% 
-  filter(E==0)
-hist(mydata.reg_cens$M_time, probability=T, breaks = 20)
-hist(mydata.reg_cens$study_exit, probability=T, breaks = 20)
-
-# dead people
-mydata.reg_dead <- mydata.reg %>% 
-  filter(E==1)
-hist(mydata.reg_dead$M_time, probability=T, breaks = 20)
-hist(mydata.reg_dead$study_exit, probability=T, breaks = 20)
-
-#censoring percentage
-round(nrow(mydata.reg_cens)/nrow(mydata.reg)*100,2)
-
-
-#censoring before study end
-mydata.reg_cens_befend <- mydata.reg_cens %>% 
-  filter(study_exit < 13)
-
-#censoring percentage
-round(nrow(mydata.reg_cens_befend)/nrow(mydata.reg)*100,2)
-
 
 
 
@@ -273,7 +232,7 @@ realeffects <- data.frame(time,
                           alpha_s = alpha_s,
                           beta_s = beta_s,
                           rho_s = rho_s,
-
+                          
                           eta_1 = eta_1,
                           eta_s = eta_i,
                           gamma = gamma,
@@ -294,23 +253,23 @@ surv_fn_gene <- function(aastar,
                          timeend = 13,
                          timebyy = delta,
                          realeffects){
-
+  
   timepoints <- c(timestart, realeffects$time)
-
+  
   # Getting mediator transition 0->1 at time t probabilities
   probs_aastar_all <- realeffects %>%
     arrange(time) %>%
     mutate(aa = aa,
            aastar = aastar,
-
+           
            p_pred_aa = exp(eta_1 + eta_s + gamma * aa + teeta * ZZ) / (1+exp(eta_1 + eta_s + gamma * aa + teeta * ZZ)),
            p_pred_aastar = exp(eta_1 + eta_s + gamma * aastar + teeta * ZZ) / (1+exp(eta_1 + eta_s + gamma * aastar + teeta * ZZ)),
-
+           
            int_index = 1:n()) %>%
     select(int_index, p_pred_aa, p_pred_aastar) %>%
     filter(time <= timeend)
-
-
+  
+  
   # All estimated additive hazards model coefficients
   all_coefs <- realeffects %>%
     mutate(a = aa,
@@ -324,33 +283,33 @@ surv_fn_gene <- function(aastar,
     mutate(t_M = max(timepoints[timepoints <= time]),
            t_Mplus1 = t_M+timebyy) %>%
     ungroup()
-
-
+  
+  
   foreach(tgrp = unique(all_coefs$int_index),
           .combine = "rbind"#,
           #.packages = c("dplyr", "reshape2", "stringr")
   ) %do% {
     print(tgrp)
     t <- all_coefs[all_coefs$int_index==tgrp,"time"]
-
+    
     #Select estimated probabilities for 0->1 transitions
     probs_aastar <- probs_aastar_all %>%
       #filter(int_index <= tgrp+1) %>%
       filter(int_index <= tgrp+1) %>%
       select(!p_pred_aa)
-
+    
     probs_aa <- probs_aastar_all %>%
       filter(int_index <= tgrp) %>%
       select(!p_pred_aastar)
-
-
+    
+    
     ####### Component 1 ---------------------------------------------------------------------------------------
     all_in_interval <- all_coefs %>%
       filter(min(t) <= time & time <= max(t))
-
+    
     comp1 <- exp(-(all_in_interval$cum_mu_s + all_in_interval$cum_alpha_s * all_in_interval$a + all_in_interval$cum_rho_s * all_in_interval$Z)*all_in_interval$delta)
-
-
+    
+    
     ####### Component 2-3 (the sum over all mediator combinations) ---------------------------------------------
     # If in the first interval, there is only one measured mediator (M_0=0 for all), so combination probability can only be 1
     if(tgrp == unique(all_coefs$int_index)[1]){
@@ -358,73 +317,73 @@ surv_fn_gene <- function(aastar,
         arrange(time) %>% 
         mutate(surv_prob = comp1) %>% 
         select(time, surv_prob)
-
+      
     } else { # If not in the first interval
       meds <- matrix(1,
                      nrow=nrow(probs_aastar)-1,
                      ncol=nrow(probs_aastar)-1)
-    
-    if(nrow(meds)==2){
-      mediator_combinations <- data.frame(upper.tri(meds, diag=T) * meds) %>% 
-        mutate(scenario = 1:n()) %>%  #add scenario id
-        relocate(scenario) %>% 
-        reshape2::melt(id="scenario") %>% 
-        rename(t_M = variable,
-               M = value) %>% 
-        mutate(t_M = as.numeric(str_split_i(t_M, "X", 2))) %>% 
-        arrange(scenario, t_M) %>% 
-        mutate(t_Mminus1 = t_M-1,
-               Mminus1 = ifelse(t_M==1, 0, M),
-               int_index = t_M) %>% 
-        relocate(scenario, t_Mminus1, t_M, Mminus1, M) %>% 
-        left_join(probs_aastar, by=c("int_index"="int_index")) #probs of 0->1 for mediator
-    } else {
-
-      mediator_combinations <- data.frame(upper.tri(meds, diag=T) * meds) %>%
-        mutate(scenario = 1:n()) %>%  #add scenario id
-        relocate(scenario) %>%
-        reshape2::melt(id="scenario") %>%
-        rename(t_M = variable,
-               M = value) %>%
-        mutate(t_M = as.numeric(str_split_i(t_M, "X", 2))) %>%
-        arrange(scenario, t_M) %>%
-        mutate(t_Mminus1 = t_M-1,
-               Mminus1 = ifelse(t_M==1, 0, M),
-               int_index = t_M) %>%
-        relocate(scenario, t_Mminus1, t_M, Mminus1, M) %>%
-        left_join(probs_aastar, by=c("int_index"="int_index")) #probs of 0->1 for mediator
-    }
-
+      
+      if(nrow(meds)==2){
+        mediator_combinations <- data.frame(upper.tri(meds, diag=T) * meds) %>% 
+          mutate(scenario = 1:n()) %>%  #add scenario id
+          relocate(scenario) %>% 
+          reshape2::melt(id="scenario") %>% 
+          rename(t_M = variable,
+                 M = value) %>% 
+          mutate(t_M = as.numeric(str_split_i(t_M, "X", 2))) %>% 
+          arrange(scenario, t_M) %>% 
+          mutate(t_Mminus1 = t_M-1,
+                 Mminus1 = ifelse(t_M==1, 0, M),
+                 int_index = t_M) %>% 
+          relocate(scenario, t_Mminus1, t_M, Mminus1, M) %>% 
+          left_join(probs_aastar, by=c("int_index"="int_index")) #probs of 0->1 for mediator
+      } else {
+        
+        mediator_combinations <- data.frame(upper.tri(meds, diag=T) * meds) %>%
+          mutate(scenario = 1:n()) %>%  #add scenario id
+          relocate(scenario) %>%
+          reshape2::melt(id="scenario") %>%
+          rename(t_M = variable,
+                 M = value) %>%
+          mutate(t_M = as.numeric(str_split_i(t_M, "X", 2))) %>%
+          arrange(scenario, t_M) %>%
+          mutate(t_Mminus1 = t_M-1,
+                 Mminus1 = ifelse(t_M==1, 0, M),
+                 int_index = t_M) %>%
+          relocate(scenario, t_Mminus1, t_M, Mminus1, M) %>%
+          left_join(probs_aastar, by=c("int_index"="int_index")) #probs of 0->1 for mediator
+      }
+      
       mediator_combinations$Mminus1 <- if_else(
         mediator_combinations$scenario == lag(mediator_combinations$scenario),
         lag(mediator_combinations$M, default = 0), 0
       )
       mediator_combinations$Mminus1 <- if_else(is.na(mediator_combinations$Mminus1), 0, mediator_combinations$Mminus1)
-
-
-
+      
+      
+      
       mediator_combinations <- mediator_combinations %>%
         mutate(prob_Mto1 = case_when(
           Mminus1 == 0 ~ p_pred_aastar,
           Mminus1 == 1 ~ 1),
-
+          
           prob_Mtowhatever = case_when(
             Mminus1 == 1 ~ 1,
             Mminus1 == 0 & M == 0 ~ 1-p_pred_aastar,
             Mminus1 == 0 & M == 1 ~ p_pred_aastar),
-
+          
           prob_Mtowhatever_Mbeforet = ifelse(int_index==max(int_index), 1, prob_Mtowhatever)) %>%
         group_by(scenario) %>%
         mutate(scenario_prob = prod(prob_Mtowhatever_Mbeforet)) %>%
         ungroup() %>%
         arrange(scenario) %>%
         select(!c(prob_Mtowhatever, prob_Mtowhatever_Mbeforet))
-
+      
       #sum(unique(mediator_combinations$scenario_prob)) #this should be 1
-
+      
       all_upto_lastininterval <- all_coefs %>%
         filter(time <= max(t))
-
+      
       all_upto_lastininterval %>%
         slice(rep(1:n(), nrow(all_in_interval))) %>%
         mutate(target_time = rep(all_in_interval$time, each=nrow(all_upto_lastininterval))) %>%
@@ -432,7 +391,7 @@ surv_fn_gene <- function(aastar,
         mutate(scenario = rep(unique(mediator_combinations$scenario), each=nrow(all_in_interval)*nrow(all_upto_lastininterval))) %>%
         filter(time <= target_time) %>%
         left_join(mediator_combinations, by=c("scenario"="scenario", "int_index"="int_index")) %>%
-        mutate(comp2 = -beta_s * Mminus1 * timebyy) %>% #should be prob0to1 here if we plant it on the probability
+        mutate(comp2 = -beta_s * Mminus1 * timebyy) %>% 
         group_by(scenario, target_time) %>%
         summarise(comp23 = exp(sum(comp2)),
                   scenario_prob = unique(scenario_prob),
@@ -446,35 +405,42 @@ surv_fn_gene <- function(aastar,
         mutate(comp1 = comp1,
                surv_prob = comp1 * comp23) %>%
         select(time, surv_prob)
-
-
-
+      
+      
+      
     }
   }
 }
 
+Z_val = 67
+quantile(mydata.reg$Z, seq(0,1,by=0.1))
 
 # Checking the survival curves
 real_aa1_aastar0 <- surv_fn_gene(aastar=0,
                                  aa=1,
-                                 ZZ=67,
+                                 ZZ=Z_val,
                                  realeffects = realeffects)
 save(real_aa1_aastar0, file="real_aa1_aastar0.rda")
 plot(real_aa1_aastar0$time, real_aa1_aastar0$surv_prob, type="l", ylim=c(0,1))
 
 real_aa1_aastar1 <- surv_fn_gene(aastar=1,
                                  aa=1,
-                                 ZZ=67,
+                                 ZZ=Z_val,
                                  realeffects = realeffects)
 save(real_aa1_aastar1, file= "real_aa1_aastar1.rda")
 plot(real_aa1_aastar1$time, real_aa1_aastar1$surv_prob, type="l", ylim=c(0,1))
 
 real_aa0_aastar0 <- surv_fn_gene(aastar=0,
                                  aa=0,
-                                 ZZ=67,
+                                 ZZ=Z_val,
                                  realeffects = realeffects)
 save(real_aa0_aastar0, file="real_aa0_aastar0.rda")
 plot(real_aa0_aastar0$time, real_aa0_aastar0$surv_prob, type="l", ylim=c(0,1))
+
+
+
+
+
 
 
 
